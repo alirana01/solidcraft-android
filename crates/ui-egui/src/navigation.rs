@@ -317,6 +317,30 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
     // Pinch-to-zoom (trackpad): direct manipulation, never smoothed.
     let pinch = ui.input(pinch_factor);
     let h = rect.height().max(1.0) as f64;
+    if app.preferences.nav == crate::prefs::TOUCH_NAV {
+        crate::touch::sync_tool(app);
+    }
+    // Two fingers on a touch screen: pan with the gesture, zoom with the pinch. The first
+    // finger is also a pointer, so it must not orbit or select at the same time.
+    let gesture = (app.preferences.nav == crate::prefs::TOUCH_NAV)
+        .then(|| ui.input(|i| i.multi_touch()))
+        .flatten()
+        .filter(|g| inside && g.num_touches >= 2);
+    if let Some(g) = gesture {
+        app.viewport.primary_nav = None;
+        app.viewport.orbit_snap = None;
+        app.viewport.orbit_free = None;
+        if g.translation_delta.is_finite() && g.translation_delta != egui::Vec2::ZERO {
+            app.cancel_view_animation();
+            app.cam.pan(f64::from(g.translation_delta.x), f64::from(g.translation_delta.y), h);
+        }
+        if g.zoom_delta.is_finite() && (g.zoom_delta - 1.0).abs() > 1.0e-3 {
+            app.cancel_view_animation();
+            let f = f64::from(g.zoom_delta).powf(-crate::prefs::zoom_sign(app));
+            let anchor = zoom_anchor(app, rect, hover, caps.orbit);
+            app.cam.zoom_at(f.clamp(0.05, 20.0), anchor);
+        }
+    }
     if inside && pinch != 1.0 {
         app.viewport.orbit_snap = None;
         app.viewport.orbit_free = None;
@@ -363,7 +387,7 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
     }
     // A left press with the preset's keys (Alias: Shift+Alt) navigates until the button is let
     // go (kept through the release frame, so the end of the drag doesn't select either).
-    if primary_pressed && inside {
+    if primary_pressed && inside && gesture.is_none() {
         let empty_space = |app: &SolveApp| {
             app.viewport.context_menu.is_none()
                 && hover.is_some_and(|p| {
@@ -376,7 +400,9 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
         };
         let openscad_orbit =
             app.preferences.nav == crate::prefs::OPENSCAD_NAV && app.tool.is_none() && app.dialog.is_none() && !mods.shift && empty_space(app);
-        let preset = if app.preferences.nav != crate::prefs::OPENSCAD_NAV || openscad_orbit {
+        let preset = if app.preferences.nav == crate::prefs::TOUCH_NAV {
+            crate::touch::primary_mode(crate::touch::tool(app), empty_space(app))
+        } else if app.preferences.nav != crate::prefs::OPENSCAD_NAV || openscad_orbit {
             crate::prefs::nav_mode(app, crate::prefs::NavButton::Left, mods)
         } else {
             None
@@ -412,9 +438,12 @@ pub(crate) fn handle(app: &mut SolveApp, ui: &mut egui::Ui, rect: Rect, resp: &e
     // Without orbit (a flat page), bindings that orbit do nothing.
     let allowed = |m: NavMode| caps.orbit || m != NavMode::Orbit;
     let motion = modifier_motion(app, ui, inside, hover, mods, picking).filter(|(m, _)| allowed(*m));
-    let mode = motion
-        .map(|(m, _)| m)
-        .or_else(|| {
+    let mode = if gesture.is_some() {
+        None
+    } else {
+        motion.map(|(m, _)| m)
+    }
+    .or_else(|| {
             if dragging && app.viewport.axis_drag.is_none() {
                 match button {
                     Some(b) => crate::prefs::nav_mode(app, b, mods),
@@ -739,7 +768,12 @@ mod tests {
         const PATTERNS: [&str; 7] =
             ["smooth_scroll_delta", "raw_scroll_delta", "zoom_delta()", "cam.orbit(", "cam.pan(", "cam.zoom_at(", "cam.roll_by("];
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let dirs = [root.join("src"), root.join("../../apps/solidcraft/src"), root.join("../../apps/solidcraft-web/src")];
+        let dirs = [
+            root.join("src"),
+            root.join("../../apps/solidcraft/src"),
+            root.join("../../apps/solidcraft-web/src"),
+            root.join("../../apps/solidcraft-android/src"),
+        ];
         let allowed = ["navigation.rs"];
         let mut offenders = Vec::new();
         let mut scanned = 0;
@@ -890,6 +924,106 @@ mod tests {
         let still = app.cam;
         super::device(&mut app, page, super::NavCaps::MODEL);
         assert_eq!(app.cam, still);
+    }
+
+    fn touch_frame(app: &mut crate::SolveApp, ctx: &egui::Context, time: f64, events: Vec<egui::Event>) {
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0))),
+            time: Some(time),
+            focused: true,
+            events,
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(raw, |ui| {
+            let rect = ui.max_rect();
+            app.viewport.rect = Some(rect);
+            let resp = ui.interact(rect, ui.id().with("touch"), egui::Sense::click_and_drag());
+            super::handle(app, ui, rect, &resp, super::NavCaps::MODEL);
+        });
+        out.textures_delta.clear();
+    }
+
+    /// Empty space orbits, a hit does not, two fingers pan and a pinch zooms.
+    #[test]
+    fn touch_fingers_orbit_empty_space_pan_and_zoom() {
+        use egui::{Event, PointerButton, TouchDeviceId, TouchId, TouchPhase, pos2, vec2};
+        let ctx = egui::Context::default();
+        let mut app = crate::SolveApp::new(solidcraft_engine::Session::default(), crate::Services::default());
+        app.preferences.nav = crate::prefs::TOUCH_NAV.into();
+        let at = pos2(200.0, 300.0);
+        touch_frame(&mut app, &ctx, 0.0, vec![Event::PointerMoved(at)]);
+        let before = app.cam;
+        touch_frame(
+            &mut app,
+            &ctx,
+            0.02,
+            vec![Event::PointerButton { pos: at, button: PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE }],
+        );
+        for k in 1..5 {
+            touch_frame(&mut app, &ctx, 0.02 * (k as f64 + 1.0), vec![Event::PointerMoved(at + vec2(16.0, 4.0) * k as f32)]);
+        }
+        touch_frame(
+            &mut app,
+            &ctx,
+            0.2,
+            vec![Event::PointerButton { pos: at + vec2(64.0, 16.0), button: PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE }],
+        );
+        assert_ne!((app.cam.yaw, app.cam.pitch), (before.yaw, before.pitch), "one finger on empty space orbits");
+
+        app.session.execute("solid.box", &serde_json::json!({"length":80,"width":80,"height":40})).unwrap();
+        app.fit_view();
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(800.0, 600.0));
+        let proj = crate::viewport::projection(&app, rect);
+        let hit = (0..8)
+            .flat_map(|i| (0..6).map(move |j| pos2(80.0 + i as f32 * 80.0, 80.0 + j as f32 * 70.0)))
+            .find(|p| !crate::viewport::pick(&app, &proj, *p).is_empty());
+        let Some(hit) = hit else {
+            panic!("the box should be under some point of the fitted view");
+        };
+        let yaw = app.cam.yaw;
+        touch_frame(&mut app, &ctx, 1.0, vec![Event::PointerMoved(hit)]);
+        touch_frame(
+            &mut app,
+            &ctx,
+            1.02,
+            vec![Event::PointerButton { pos: hit, button: PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE }],
+        );
+        for k in 1..4 {
+            touch_frame(&mut app, &ctx, 1.02 + 0.02 * k as f64, vec![Event::PointerMoved(hit + vec2(10.0, 0.0) * k as f32)]);
+        }
+        assert_eq!(app.cam.yaw, yaw, "a press on the body does not orbit");
+        touch_frame(
+            &mut app,
+            &ctx,
+            1.2,
+            vec![Event::PointerButton {
+                pos: hit + vec2(30.0, 0.0),
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+
+        let target = app.cam.target;
+        let a = pos2(300.0, 280.0);
+        let b = pos2(360.0, 280.0);
+        let finger = |id, phase, pos| Event::Touch { device_id: TouchDeviceId(1), id: TouchId(id), phase, pos, force: None };
+        touch_frame(&mut app, &ctx, 2.0, vec![finger(1, TouchPhase::Start, a), finger(2, TouchPhase::Start, b)]);
+        touch_frame(
+            &mut app,
+            &ctx,
+            2.05,
+            vec![finger(1, TouchPhase::Move, a + vec2(-30.0, -20.0)), finger(2, TouchPhase::Move, b + vec2(-30.0, -20.0))],
+        );
+        assert_ne!(app.cam.target, target, "two fingers pan");
+        let distance = app.cam.distance;
+        touch_frame(
+            &mut app,
+            &ctx,
+            2.1,
+            vec![finger(1, TouchPhase::Move, a + vec2(-80.0, -20.0)), finger(2, TouchPhase::Move, b + vec2(40.0, -20.0))],
+        );
+        assert_ne!(app.cam.distance, distance, "spreading two fingers zooms");
     }
 }
 

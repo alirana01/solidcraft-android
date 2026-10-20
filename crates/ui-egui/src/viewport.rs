@@ -87,6 +87,13 @@ pub struct ViewportState {
     /// Browser/timeline body feedback, independent of the camera and reference widget scale.
     hover_block: std::sync::Mutex<Option<HoverBlock>>,
     pub nav: Option<NavMode>,
+    /// Touch preset: one-finger mode chosen on the chip. None follows the sketch/dialog context.
+    pub(crate) touch_tool: Option<crate::touch::Tool>,
+    /// Whether a sketch or feature dialog was open when [`crate::touch::sync_tool`] last ran.
+    pub(crate) touch_selecting: bool,
+    /// Phone drawers, independent of the desktop show/hide flags.
+    pub(crate) touch_browser: bool,
+    pub(crate) touch_timeline: bool,
     /// The preset's navigation for the left-button drag under way (Alias: Shift+Alt), taken
     /// when the button went down, so the drag neither selects nor moves sketch geometry.
     pub primary_nav: Option<NavMode>,
@@ -2950,6 +2957,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::select_other::show(app, ui.ctx());
     axis_view(app, ui, rect);
     nav_bar(app, ui, rect);
+    crate::touch::chip(app, ui, rect);
     // A command recomputing the history off the window thread (the marker moved, undo): the
     // window goes on, and says so above the status chip.
     if let Some(since) = app.computing_since() {

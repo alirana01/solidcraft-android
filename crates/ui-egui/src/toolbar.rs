@@ -284,7 +284,114 @@ const REPORT_TEXT_X: f32 = 29.0;
 /// The application bar's height: the window's title bar on desktop builds.
 pub const APP_BAR_HEIGHT: f32 = 34.0;
 
+/// File, undo, redo and preferences, with room for a finger and the system status bar.
+fn app_bar_phone(app: &mut SolveApp, ui: &mut egui::Ui) {
+    let t = Tokens::get();
+    let top = ui.ctx().input(|i| i.safe_area_insets().0.top).clamp(0.0, 80.0);
+    egui::Panel::top("sc_appbar")
+        .exact_size(48.0 + top)
+        .show_separator_line(false)
+        .frame(egui::Frame::NONE.fill(t.app_bar))
+        .show(ui, |ui| {
+            let r = ui.max_rect();
+            let y = r.bottom() - 24.0;
+            let idle = !app.file_load.busy();
+            let shown = design_shown(app) && idle;
+            let mut x = r.left() + 28.0;
+            let hit = |ui: &mut egui::Ui, at: f32, id: &str, label: &str, enabled: bool| -> bool {
+                let br = Rect::from_center_size(pos2(at, y), vec2(44.0, 44.0));
+                let resp = ui.interact(br, ui.id().with(("ab", id)), if enabled { Sense::click() } else { Sense::hover() });
+                if enabled && (resp.hovered() || resp.clicked()) {
+                    ui.painter().rect_filled(br, 8.0, t.app_bar_hover);
+                }
+                ui.painter().text(
+                    br.center(),
+                    Align2::CENTER_CENTER,
+                    label,
+                    FontId::proportional(13.0),
+                    if enabled { t.app_bar_text } else { t.app_bar_text.gamma_multiply(0.35) },
+                );
+                enabled && resp.clicked()
+            };
+            if hit(ui, x, "file", app.tr("ui.file"), idle) {
+                let ctx = ui.ctx().clone();
+                let open = ctx.data(|d| d.get_temp::<bool>(egui::Id::new("sc_file_menu")).unwrap_or(false));
+                let pass = ctx.cumulative_pass_nr();
+                ctx.data_mut(|d| {
+                    d.insert_temp(egui::Id::new("sc_file_menu"), !open);
+                    d.insert_temp(egui::Id::new("sc_file_menu_opened"), pass);
+                    d.insert_temp(egui::Id::new("sc_file_menu_x"), x - 22.0);
+                });
+            }
+            x += 52.0;
+            if hit(ui, x, "undo", "Undo", shown) {
+                let _ = app.run("edit.undo", json!({}));
+            }
+            x += 52.0;
+            if hit(ui, x, "redo", "Redo", shown) {
+                let _ = app.run("edit.redo", json!({}));
+            }
+            let gear = r.right() - 28.0;
+            if hit(ui, gear, "settings", "Prefs", true) {
+                crate::prefs::open_at(app, 0);
+            }
+        });
+    file_menu(app, ui.ctx());
+}
+
+/// Icon row for a narrow window: workspace tabs, then the current tab's commands, scrolled sideways.
+pub fn toolbar_phone(app: &mut SolveApp, ui: &mut egui::Ui) {
+    let t = Tokens::get();
+    let sketching = app.session.active_sketch.is_some();
+    egui::Panel::top("sc_toolbar").exact_size(56.0).frame(egui::Frame::NONE.fill(t.toolbar)).show(ui, |ui| {
+        let mut tabs: Vec<&str> = Vec::new();
+        if sketching {
+            tabs.push("SKETCH");
+        }
+        if crate::render_workspace::active(app) {
+            tabs.push("RENDER");
+        } else {
+            tabs.extend(TABS.iter().copied());
+        }
+        let tab = app.ui.tab.clone();
+        let lists = crate::toolbar_custom::panel_lists(&tab);
+        egui::ScrollArea::horizontal().id_salt("phone_toolbar").show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                for name in tabs {
+                    let on = app.ui.tab == name;
+                    if ui.selectable_label(on, app.tr_label(name)).clicked() {
+                        app.ui.tab = name.to_string();
+                    }
+                }
+                ui.separator();
+                for (_panel, cmds, promote) in &lists {
+                    let shown = crate::toolbar_custom::buttons(app, &tab, _panel, cmds, *promote);
+                    for c in shown {
+                        let info = c.info(&app.session);
+                        let (rect, resp) = ui.allocate_exact_size(vec2(44.0, 44.0), Sense::click());
+                        if resp.hovered() && info.enabled {
+                            ui.painter().rect_filled(rect, 6.0, t.hover);
+                        }
+                        let (ink, fill, acc) =
+                            if info.enabled { (t.icon, t.icon_fill, command_accent(c.icon)) } else { (t.border, t.panel_header, t.border) };
+                        icons::paint(ui.painter(), rect.shrink(8.0), c.icon, ink, fill, acc);
+                        let label = app.tr_label(c.label);
+                        if resp.on_hover_text(label).clicked() && info.enabled {
+                            app.start(c.id);
+                        }
+                    }
+                }
+            });
+        });
+    });
+}
+
 pub fn app_bar(app: &mut SolveApp, ui: &mut egui::Ui) {
+    if crate::touch::compact(ui.ctx()) {
+        app_bar_phone(app, ui);
+        return;
+    }
     let t = Tokens::get();
     egui::Panel::top("sc_appbar").exact_size(APP_BAR_HEIGHT).show_separator_line(false).frame(egui::Frame::NONE.fill(t.app_bar)).show(ui, |ui| {
         let r = ui.max_rect();

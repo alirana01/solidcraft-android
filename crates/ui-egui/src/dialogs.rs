@@ -2355,10 +2355,19 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     let material_names = app.session.doc.material_names();
     let t = Tokens::get();
     let vp = app.viewport.rect.unwrap_or_else(|| ctx.content_rect());
-    let top = (vp.top() + crate::viewport::AXIS_VIEW_CLEARANCE).min((vp.bottom() - 360.0).max(vp.top()));
+    let compact = crate::touch::compact(ctx);
+    let sheet = (vp.height() * 0.46).clamp(200.0, 520.0);
+    let top = if compact {
+        (vp.bottom() - sheet).max(vp.top())
+    } else {
+        (vp.top() + crate::viewport::AXIS_VIEW_CLEARANCE).min((vp.bottom() - 360.0).max(vp.top()))
+    };
     // The Sketch Palette owns the right edge for as long as a sketch is being edited. A dialog
-    // started there docks at the left instead, so neither panel hides the other.
-    let side = if crate::sketch_palette::editing(app) && crate::sketch_palette::fits_beside_a_dialog(app, ctx) {
+    // started there docks at the left instead, so neither panel hides the other. A narrow
+    // screen uses a bottom sheet instead of either edge.
+    let side = if compact {
+        crate::frame::Side::Bottom
+    } else if crate::sketch_palette::editing(app) && crate::sketch_palette::fits_beside_a_dialog(app, ctx) {
         crate::frame::Side::Left
     } else {
         crate::frame::Side::Right
@@ -2410,15 +2419,23 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
         // Long texts (errors, notes) wrap instead of widening the dialog.
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
         let margin = horizontal_frame;
-        let min_w = if pattern_columns {
+        let min_w = if compact {
+            (vp.width() - margin - 12.0).clamp(120.0, 4096.0)
+        } else if pattern_columns {
             540.0
         } else if wide {
             480.0
         } else {
             DIALOG_MIN_W
-        } - margin;
-        ui.set_min_width(min_w);
-        ui.set_max_width(if wide { DIALOG_WIDE_MAX_W } else { DIALOG_MAX_W } - margin);
+        } - if compact { 0.0 } else { margin };
+        ui.set_min_width(min_w.max(0.0));
+        ui.set_max_width(if compact {
+            (vp.width() - margin).max(min_w)
+        } else if wide {
+            DIALOG_WIDE_MAX_W - margin
+        } else {
+            DIALOG_MAX_W - margin
+        });
         // Rows that end at the right edge line up with last frame's content width.
         let total = crate::frame::content_width(ui, wkey, min_w);
         // Header: "−" folds the dialog, the command name, "»" at the right, on the title band,
@@ -3272,6 +3289,7 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                 let galley = egui::WidgetText::from(text).into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Button);
                 (galley.size().x + 2.0 * ui.spacing().button_padding.x).max(64.0)
             };
+            let button_h = ui.spacing().interact_size.y.max(24.0);
             let (ok_width, close_width) = (button_width(label), button_width(close));
             let buttons = close_width + if has_ok { ok_width + ui.spacing().item_spacing.x } else { 0.0 };
             crate::frame::right_aligned(ui, total, buttons, |ui| {
@@ -3279,14 +3297,14 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
                     let b = egui::Button::new(RichText::new(label).color(if valid { Color32::WHITE } else { t.text_dim }))
                         .fill(if valid { t.accent } else { Color32::TRANSPARENT })
                         .wrap_mode(egui::TextWrapMode::Extend)
-                        .min_size(vec2(ok_width, 24.0));
+                        .min_size(vec2(ok_width, button_h));
                     let r = ui.add_enabled(valid && app.applying.is_none(), b);
                     crate::scenario::publish_handle(&format!("dialog:{raw_label}"), r.rect.center());
                     if r.clicked() {
                         ok = true;
                     }
                 }
-                if ui.add(egui::Button::new(close).wrap_mode(egui::TextWrapMode::Extend).min_size(vec2(close_width, 24.0))).clicked() {
+                if ui.add(egui::Button::new(close).wrap_mode(egui::TextWrapMode::Extend).min_size(vec2(close_width, button_h))).clicked() {
                     cancel = true;
                 }
             });

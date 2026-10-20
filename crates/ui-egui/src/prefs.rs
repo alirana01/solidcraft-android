@@ -33,6 +33,7 @@ use crate::viewport::NavMode;
 pub const UNITS: [&str; 5] = ["mm", "cm", "m", "in", "ft"];
 pub const OPENSCAD_NAV: &str = "openscad";
 pub const TOUCHPAD_NAV: &str = "touchpad";
+pub const TOUCH_NAV: &str = "touch";
 /// A mouse button that can drag the camera.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NavButton {
@@ -96,7 +97,7 @@ use NavButton::{Left, Middle, Right};
 use NavMode::{Orbit, Pan, Zoom};
 
 /// The mouse mappings. The first is the default.
-pub const NAV_PRESETS: [NavPreset; 8] = [
+pub const NAV_PRESETS: [NavPreset; 9] = [
     NavPreset {
         id: "fusion",
         label: "Fusion",
@@ -173,6 +174,13 @@ pub const NAV_PRESETS: [NavPreset; 8] = [
         id: TOUCHPAD_NAV,
         label: "Touchpad",
         help: "Hold Shift and move the pointer to pan; hold Alt/Option and move it to orbit. No mouse button is needed. Vertical scroll zooms.",
+        reverse_zoom: false,
+        bindings: &[bind(Middle, NavKeys::NONE, Pan), bind(Right, NavKeys::NONE, Orbit)],
+    },
+    NavPreset {
+        id: TOUCH_NAV,
+        label: "Touch",
+        help: "One finger on empty space orbits, and on a face, edge or sketch point selects or drags. Two fingers pan. Pinch zooms. A long-press opens the menu.",
         reverse_zoom: false,
         bindings: &[bind(Middle, NavKeys::NONE, Pan), bind(Right, NavKeys::NONE, Orbit)],
     },
@@ -1326,6 +1334,8 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.end_row();
             if app.preferences.nav == TOUCHPAD_NAV {
                 note(ui, crate::i18n::tr("nav.touchpad.help"));
+            } else if app.preferences.nav == TOUCH_NAV {
+                note(ui, nav_preset(&app.preferences.nav).help);
             } else {
                 let snap_help = if app.preferences.nav == OPENSCAD_NAV { "" } else { "; hold Shift during orbit to snap" };
                 let raw_help = format!("{}; Ctrl+left drag on empty space orbits{snap_help}; hold Space to pan; the wheel zooms", nav_preset(&app.preferences.nav).help);

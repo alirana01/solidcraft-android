@@ -208,6 +208,7 @@ pub mod tool_modifiers;
 pub mod toolbar;
 pub mod toolbar_custom;
 pub mod tools;
+pub(crate) mod touch;
 pub mod update;
 pub mod viewport;
 mod viewport_layout;
@@ -1343,6 +1344,11 @@ impl SolveApp {
         open_meshing::refresh(self, ctx.input(|i| i.time));
         self.esc_handled = false;
         prefs::apply(self, ctx);
+        let phone = touch::compact(ctx);
+        touch::apply_spacing(ctx, phone);
+        if self.preferences.nav == prefs::TOUCH_NAV || phone {
+            ctx.options_mut(|o| o.input_options.max_click_duration = 0.4);
+        }
         if !self.styled || theme::is_dark() != self.ui.dark || theme::vision() != self.preferences.color_vision {
             theme::set_dark(self.ui.dark);
             theme::set_vision(self.preferences.color_vision);
@@ -1472,16 +1478,30 @@ impl SolveApp {
                 return;
             }
         }
-        toolbar::toolbar(self, ui);
+        let compact = touch::compact(ui.ctx());
+        if compact {
+            toolbar::toolbar_phone(self, ui);
+            touch::bottom_bar(self, ui);
+        } else {
+            toolbar::toolbar(self, ui);
+        }
         let show_timeline = self.ui.show_timeline && !render_workspace::active(self);
         let left_timeline = show_timeline && self.preferences.timeline_left;
-        if show_timeline && !left_timeline {
+        if compact {
+            if self.viewport.touch_timeline && show_timeline {
+                timeline::timeline(self, ui);
+            }
+        } else if show_timeline && !left_timeline {
             timeline::timeline(self, ui);
         }
         palette::palette_bar(self, ui);
         // A floating browser keeps the workspace the whole width: it is drawn over the view below.
-        let browser_float = self.ui.show_browser && self.preferences.browser_float;
-        if self.ui.show_browser && !browser_float {
+        let browser_float = !compact && self.ui.show_browser && self.preferences.browser_float;
+        if compact {
+            if self.viewport.touch_browser {
+                browser::browser(self, ui);
+            }
+        } else if self.ui.show_browser && !browser_float {
             if left_timeline {
                 browser::browser_below_timeline(self, ui);
             } else {
