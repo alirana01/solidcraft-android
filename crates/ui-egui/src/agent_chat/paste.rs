@@ -26,9 +26,10 @@ pub trait Clipboard {
     fn picture(&mut self) -> Option<Picture>;
 }
 
-/// The system's clipboard.
+/// The system's clipboard. Android has no arboard backend, so paste-from-clipboard is empty there.
 pub struct System;
 
+#[cfg(not(target_os = "android"))]
 impl Clipboard for System {
     fn files(&mut self) -> Vec<PathBuf> {
         arboard::Clipboard::new().and_then(|mut c| c.get().file_list()).unwrap_or_default()
@@ -36,6 +37,16 @@ impl Clipboard for System {
     fn picture(&mut self) -> Option<Picture> {
         let i = arboard::Clipboard::new().and_then(|mut c| c.get_image()).ok()?;
         Some(Picture { width: i.width, height: i.height, rgba: i.bytes.into_owned() })
+    }
+}
+
+#[cfg(target_os = "android")]
+impl Clipboard for System {
+    fn files(&mut self) -> Vec<PathBuf> {
+        Vec::new()
+    }
+    fn picture(&mut self) -> Option<Picture> {
+        None
     }
 }
 
@@ -201,7 +212,11 @@ mod tests {
         std::fs::write(&spaced, b"solid").unwrap();
         let plain = d.join("brief.md");
         std::fs::write(&plain, b"x").unwrap();
-        let link = |p: &Path| format!("file://{}", p.to_string_lossy().replace(' ', "%20"));
+        // A proper file URL on every system: `file:///tmp/a%20b`, `file:///C:/Users/a%20b`.
+        let link = |p: &Path| {
+            let path = p.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/").replace(' ', "%20");
+            format!("file://{}{path}", if path.starts_with('/') { "" } else { "/" })
+        };
         let list = format!("# copied\n{}\r\n{}\n", link(&spaced), link(&plain));
         assert_eq!(files_in_text(&list), vec![spaced.clone(), plain.clone()]);
         assert!(matches!(decide(Some(&list), &mut Fake::default()), Paste::Files(f) if f.len() == 2));

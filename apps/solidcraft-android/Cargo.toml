@@ -1,0 +1,36 @@
+[package]
+name = "solidcraft-android"
+description = "SolidCraft on Android (eframe, GameActivity, arm64)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Same workspace lints, except unsafe_code is denied rather than forbidden so the Storage
+# Access Framework call (src/picker.rs) can use JNI. Nothing else in this crate is unsafe.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+too_many_arguments = "allow"
+type_complexity = "allow"
+neg_cmp_op_on_partial_ord = "allow"
+
+[lib]
+name = "solidcraft_android"
+crate-type = ["cdylib"]
+
+[dependencies]
+solidcraft-engine = { workspace = true }
+solidcraft-ui-egui = { workspace = true }
+eframe = { workspace = true, features = ["default_fonts", "wgpu"] }
+egui = { workspace = true }
+log = { workspace = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+eframe = { workspace = true, features = ["default_fonts", "wgpu", "android-game-activity"] }
+android-activity = { version = "0.6.1", features = ["game-activity"] }
+android_logger = "0.15"
+jni = "0.21"

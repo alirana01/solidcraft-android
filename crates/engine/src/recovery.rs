@@ -9,8 +9,17 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+/// App-private storage on Android (the activity's internal files directory). Set once at
+/// startup, before recovery or settings are named. Desktop and the browser leave it unset.
+static DATA_ROOT: OnceLock<PathBuf> = OnceLock::new();
+
+/// Use `path` as [`data_dir`] for this process. The first call wins.
+pub fn set_data_root(path: PathBuf) -> bool {
+    DATA_ROOT.set(path).is_ok()
+}
 
 use serde::{Deserialize, Serialize};
 use solidcraft_doc::Document;
@@ -28,6 +37,9 @@ pub fn default_dir() -> Option<PathBuf> {
     }
     if let Some(d) = solidcraft_geom::env::var_os("RECOVERY_DIR").filter(|d| !d.is_empty()) {
         return Some(long_names(Path::new(&d)));
+    }
+    if let Some(root) = DATA_ROOT.get() {
+        return Some(root.join("recovery"));
     }
     let env = |k: &str| std::env::var_os(k).filter(|d| !d.is_empty()).map(PathBuf::from);
     let root = if cfg!(windows) {
@@ -54,6 +66,9 @@ pub fn default_dir() -> Option<PathBuf> {
 /// `~/Library/Application Support/SolidCraft`, or `$XDG_DATA_HOME/solidcraft`
 /// (`~/.local/share/solidcraft`).
 pub fn data_dir() -> Option<PathBuf> {
+    if let Some(root) = DATA_ROOT.get() {
+        return Some(root.clone());
+    }
     let env = |k: &str| std::env::var_os(k).filter(|d| !d.is_empty()).map(PathBuf::from);
     if cfg!(windows) {
         Some(env("LOCALAPPDATA")?.join("SolidCraft"))

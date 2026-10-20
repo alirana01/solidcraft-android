@@ -36,6 +36,8 @@ pub enum Width {
 pub enum Side {
     Right,
     Left,
+    /// A phone sheet: the full width, sitting on the bottom edge.
+    Bottom,
 }
 
 impl Side {
@@ -43,7 +45,7 @@ impl Side {
     pub fn anchor_x(self, viewport: egui::Rect) -> f32 {
         match self {
             Side::Right => viewport.right(),
-            Side::Left => viewport.left(),
+            Side::Left | Side::Bottom => viewport.left(),
         }
     }
 }
@@ -55,6 +57,7 @@ pub fn dock_frame(ctx: &egui::Context, side: Side) -> egui::Frame {
     let (corner_radius, shadow_x) = match side {
         Side::Right => (egui::CornerRadius { nw: 4, sw: 4, ne: 0, se: 0 }, -2),
         Side::Left => (egui::CornerRadius { nw: 0, sw: 0, ne: 4, se: 4 }, 2),
+        Side::Bottom => (egui::CornerRadius { nw: 8, ne: 8, sw: 0, se: 0 }, 0),
     };
     egui::Frame::window(&ctx.global_style())
         .fill(t.dialog_bg)
@@ -71,13 +74,14 @@ pub fn docked<'a>(title: impl Into<WidgetText>, id: egui::Id, anchor: Pos2, max_
 /// A command dialog docked against `side` at `anchor` (its top corner on that side),
 /// shrink-wrapped to its content.
 pub fn docked_on<'a>(title: impl Into<WidgetText>, id: egui::Id, anchor: Pos2, max_height: f32, width: Width, side: Side) -> egui::Window<'a> {
-    let max = match width {
-        Width::Normal => DIALOG_MAX_W,
-        Width::Wide => DIALOG_WIDE_MAX_W,
+    let max = match (side, width) {
+        (Side::Bottom, _) => 4096.0,
+        (_, Width::Normal) => DIALOG_MAX_W,
+        (_, Width::Wide) => DIALOG_WIDE_MAX_W,
     };
     let pivot = match side {
         Side::Right => Align2::RIGHT_TOP,
-        Side::Left => Align2::LEFT_TOP,
+        Side::Left | Side::Bottom => Align2::LEFT_TOP,
     };
     egui::Window::new(title)
         .enabled(!crate::issue_report::cad_input_blocked())
@@ -110,9 +114,14 @@ pub fn reset_dock_offset(ctx: &egui::Context) {
 /// room for its title band.
 pub fn offset_anchor(docked: Pos2, offset: egui::Vec2, vp: egui::Rect, side: Side) -> Pos2 {
     let p = docked + offset;
+    if side == Side::Bottom {
+        let y = if vp.top() <= vp.bottom() - 160.0 { p.y.clamp(vp.top(), vp.bottom() - 160.0) } else { docked.y };
+        return egui::pos2(docked.x, y);
+    }
     let (lo, hi) = match side {
         Side::Right => (vp.left() + DIALOG_MIN_W, vp.right()),
         Side::Left => (vp.left(), vp.right() - DIALOG_MIN_W),
+        Side::Bottom => (docked.x, docked.x),
     };
     let x = if lo <= hi { p.x.clamp(lo, hi) } else { docked.x };
     let y = if vp.top() <= vp.bottom() - 40.0 { p.y.clamp(vp.top(), vp.bottom() - 40.0) } else { docked.y };

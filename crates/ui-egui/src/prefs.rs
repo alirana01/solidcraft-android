@@ -33,6 +33,7 @@ use crate::viewport::NavMode;
 pub const UNITS: [&str; 5] = ["mm", "cm", "m", "in", "ft"];
 pub const OPENSCAD_NAV: &str = "openscad";
 pub const TOUCHPAD_NAV: &str = "touchpad";
+pub const TOUCH_NAV: &str = "touch";
 /// A mouse button that can drag the camera.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NavButton {
@@ -96,7 +97,7 @@ use NavButton::{Left, Middle, Right};
 use NavMode::{Orbit, Pan, Zoom};
 
 /// The mouse mappings. The first is the default.
-pub const NAV_PRESETS: [NavPreset; 8] = [
+pub const NAV_PRESETS: [NavPreset; 9] = [
     NavPreset {
         id: "fusion",
         label: "Fusion",
@@ -173,6 +174,13 @@ pub const NAV_PRESETS: [NavPreset; 8] = [
         id: TOUCHPAD_NAV,
         label: "Touchpad",
         help: "Hold Shift and move the pointer to pan; hold Alt/Option and move it to orbit. No mouse button is needed. Vertical scroll zooms.",
+        reverse_zoom: false,
+        bindings: &[bind(Middle, NavKeys::NONE, Pan), bind(Right, NavKeys::NONE, Orbit)],
+    },
+    NavPreset {
+        id: TOUCH_NAV,
+        label: "Touch",
+        help: "One finger on empty space orbits, and on a face, edge or sketch point selects or drags. Two fingers pan. Pinch zooms. A long-press opens the menu.",
         reverse_zoom: false,
         bindings: &[bind(Middle, NavKeys::NONE, Pan), bind(Right, NavKeys::NONE, Orbit)],
     },
@@ -268,6 +276,8 @@ pub struct Prefs {
     pub navigator_style: NavigatorStyle,
     /// Show the radial ring and enable hold/flick gestures for viewport context menus.
     pub radial_context_menu: bool,
+    /// Mouse gestures: a ring of tools on the right button (SolidWorks mouse mode only).
+    pub mouse_gestures: crate::mouse_gesture::Config,
     /// The wheel zooms out when turned forward.
     pub zoom_reverse: bool,
     /// What an orbit turns around.
@@ -446,6 +456,7 @@ impl Default for Prefs {
             nav: "fusion".into(),
             navigator_style: NavigatorStyle::default(),
             radial_context_menu: false,
+            mouse_gestures: Default::default(),
             zoom_reverse: false,
             orbit_around: OrbitAround::default(),
             orbit_cursor: false,
@@ -762,6 +773,7 @@ fn defaults(app: &mut SolveApp, page: usize) {
             p.nav = d.nav;
             p.navigator_style = d.navigator_style;
             p.radial_context_menu = d.radial_context_menu;
+            p.mouse_gestures = d.mouse_gestures;
             p.zoom_reverse = d.zoom_reverse;
             p.zoom_to_cursor = d.zoom_to_cursor;
             p.smooth_wheel_zoom = d.smooth_wheel_zoom;
@@ -885,6 +897,10 @@ pub fn set_autosave(app: &mut SolveApp) {
 
 /// Which navigation dragging `button` with `mods` held does under the preset.
 pub fn nav_mode(app: &SolveApp, button: NavButton, mods: Modifiers) -> Option<NavMode> {
+    // With mouse gestures on, the right button opens the ring of tools instead of orbiting.
+    if button == NavButton::Right && crate::mouse_gesture::active(app) {
+        return None;
+    }
     nav_preset(&app.preferences.nav).mode(button, mods)
 }
 
@@ -1318,6 +1334,8 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.end_row();
             if app.preferences.nav == TOUCHPAD_NAV {
                 note(ui, crate::i18n::tr("nav.touchpad.help"));
+            } else if app.preferences.nav == TOUCH_NAV {
+                note(ui, nav_preset(&app.preferences.nav).help);
             } else {
                 let snap_help = if app.preferences.nav == OPENSCAD_NAV { "" } else { "; hold Shift during orbit to snap" };
                 let raw_help = format!("{}; Ctrl+left drag on empty space orbits{snap_help}; hold Space to pan; the wheel zooms", nav_preset(&app.preferences.nav).help);
@@ -1326,6 +1344,7 @@ fn page(app: &mut SolveApp, ui: &mut egui::Ui, t: &Tokens) {
             ui.label(crate::i18n::tr_label("Context menu"));
             ui.checkbox(&mut app.preferences.radial_context_menu, crate::i18n::tr_label("Radial context menu"));
             ui.end_row();
+            crate::mouse_gesture::nav_rows(app, ui, t);
             ui.label(crate::i18n::tr_label("View navigator"));
             let picker =
                 egui::ComboBox::from_id_salt("pref_navigator_style").selected_text(crate::i18n::tr_label(app.preferences.navigator_style.label())).show_ui(ui, |ui| {

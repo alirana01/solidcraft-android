@@ -10,3 +10,9 @@ __pycache__/
 
 # cargo-mutants output (docs/mutation-testing.md)
 mutants.out*/
+
+# Android host build outputs (the Gradle project itself stays)
+apps/solidcraft-android/android/local.properties
+apps/solidcraft-android/android/.gradle/
+apps/solidcraft-android/android/**/build/
+apps/solidcraft-android/android/**/jniLibs/
